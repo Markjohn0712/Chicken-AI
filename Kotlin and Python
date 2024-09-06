@@ -1,0 +1,1603 @@
+Chicken AI. ipynb
+from google.colab import drive
+drive.mount('/content/drive')
+
+# from google.colab import files
+# uploaded = files.upload()
+
+## **New Section**
+
+# !unzip -uq "/content/ResizeDataset.zip" -d "/content"
+
+import tensorflow as tf
+import tensorflow_hub as hub
+import os
+from keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras import Model
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras import layers
+
+train_dir='/content/drive/MyDrive/Chicken AI'
+
+Labels = ['Banaba Female','Banaba Male','Non Detected','Paraoakan Female','Paraoakan Male']
+
+print ("class : ")
+for i in range(len(Labels)):
+    print (i, end = " ")
+    print (Labels[i])
+
+print('Number of classes:',len(Labels))
+
+module_selection = ("mobilenet_v2", 224, 1280)
+handle_base, pixels, FV_SIZE = module_selection
+MODULE_HANDLE ="https://tfhub.dev/google/tf2-preview/{}/feature_vector/2".format(handle_base)
+IMAGE_SIZE = (pixels, pixels)
+BATCH_SIZE = 16
+
+IMAGE_SIZE
+
+# Original number of samples before augmentation
+original_num_samples = sum(len(files) for _, _, files in os.walk(train_dir))
+
+train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=40,
+    horizontal_flip=True,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    fill_mode='nearest',
+    validation_split=0.4,
+    # Additional augmentations
+    # brightness_range=[0.8, 1.2],
+    # channel_shift_range=10,
+    # vertical_flip=True,
+    # preprocessing_function=tf.keras.applications.mobilenet_v2.preprocess_input
+)
+
+# Rest of your code remains unchanged
+
+train_generator = train_datagen.flow_from_directory(
+    train_dir,
+    subset="training",
+    shuffle=True,
+    seed=42,
+    color_mode="rgb",
+    class_mode="categorical",
+    target_size=IMAGE_SIZE,
+    batch_size=BATCH_SIZE)
+
+validation_generator = train_datagen.flow_from_directory(
+    train_dir,
+    shuffle=False,
+    seed=42,
+    color_mode="rgb",
+    class_mode="categorical",
+    subset="validation",
+    target_size=IMAGE_SIZE,
+    batch_size=BATCH_SIZE)
+
+num_augmentations = (1 + train_datagen.rotation_range // 40) * 2  # Assuming horizontal flip
+
+# Total number of training samples after augmentation
+total_training_samples = original_num_samples * num_augmentations
+print(f"Total number of training samples after augmentation: {total_training_samples}")
+
+feature_extractor = hub.KerasLayer(MODULE_HANDLE,input_shape=IMAGE_SIZE+(3,), output_shape=[FV_SIZE]  )
+
+do_fine_tuning = False
+if do_fine_tuning:
+  feature_extractor.trainable = True
+  for layer in base_model.layers[-30:]:
+    layer.trainable =True
+
+else:
+  feature_extractor.trainable = False
+
+print("Building model with", MODULE_HANDLE)
+model = tf.keras.Sequential([
+    feature_extractor,
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dropout(rate=0.5),
+    tf.keras.layers.Dense(train_generator.num_classes, activation='softmax',
+                           kernel_regularizer=tf.keras.regularizers.l2(0.0001))
+])
+#model.build((None,)+IMAGE_SIZE+(3,))
+
+model.summary()
+
+LEARNING_RATE = 0.001
+model.compile(
+   optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+   loss='categorical_crossentropy',
+   metrics=['accuracy'])
+
+EPOCHS=30
+history = model.fit(
+        train_generator,
+        steps_per_epoch=train_generator.samples//train_generator.batch_size,
+        epochs=EPOCHS,
+        validation_data=validation_generator,
+        validation_steps=validation_generator.samples//validation_generator.batch_size)
+
+import matplotlib.pylab as plt
+import numpy as np
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+epochs_range = range(EPOCHS)
+plt.figure(figsize=(10, 4))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+plt.ylabel("Accuracy (training and validation)")
+plt.xlabel("Training Steps")
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.ylabel("Loss (training and validation)")
+plt.xlabel("Training Steps")
+plt.show()
+
+import random
+import cv2
+def upload(filename):
+    img = cv2.imread(os.path.join(train_dir, filename))
+    img = cv2.resize(img, (224, 224) )
+    img = img /255
+
+    return img
+
+def pre_result(image):
+    x = model.predict(np.asarray([img]))[0]
+    classx = np.argmax(x)
+    return {Labels[classx]: x[classx]}
+images = random.sample(validation_generator.filenames, 16)
+for idx, filename in enumerate(images):
+    img = upload(filename)
+    prediction = pre_result(img)
+    print("class: %s, confidence: %f" % (list(prediction.keys())[0], list(prediction.values())[0]))
+    plt.imshow(img)
+    plt.figure(idx)
+    plt.show()
+
+import pandas as pd
+import numpy as np
+import seaborn as sn
+print('Confusion Matrix')
+cm = confusion_matrix(validation_generator.classes, y)
+df = pd.DataFrame(cm, columns=validation_generator.class_indices)
+plt.figure(figsize=(10,7))
+sn.heatmap(df, annot=True)
+cd /content/drive/MyDrive/Chicken AI
+import time
+t = time.time()
+
+export_path = "/tmp/saved_models/{}".format(int(t))
+tf.keras.models.save_model(model, export_path)
+
+export_path
+
+# Now confirm that we can reload it, and it still gives the same results
+reloaded = tf.keras.models.load_model(export_path, custom_objects={'KerasLayer':hub.KerasLayer})
+
+def predict_reload(image):
+    probabilities = reloaded.predict(np.asarray([img]))[0]
+    class_idx = np.argmax(probabilities)
+
+    return {Labels[class_idx]: probabilities[class_idx]}
+
+for idx, filename in enumerate(random.sample(validation_generator.filenames, 10)):
+    print("SOURCE: class: %s, file: %s" % (os.path.split(filename)[0], filename))
+
+    img = upload(filename)
+    prediction = predict_reload(img)
+    print("PREDICTED: class: %s, confidence: %f" % (list(prediction.keys())[0], list(prediction.values())[0]))
+    plt.imshow(img)
+    plt.figure(idx)
+    plt.show()
+
+# convert the model to TFLite
+!mkdir "tflite_models"
+TFLITE_MODEL = "tflite_models/model.tflite"
+
+# Get the concrete function from the Keras model.
+run_model = tf.function(lambda x : reloaded(x))
+
+# Save the concrete function.
+concrete_func = run_model.get_concrete_function(
+    tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype)
+)
+
+# Convert the model to standard TensorFlow Lite model
+converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
+converted_tflite_model = converter.convert()
+open(TFLITE_MODEL, "wb").write(converted_tflite_model)
+
+MainActivity Kotlin
+
+package com.example.chickenai
+import   android.app.Activity
+import android.util.Log
+import android.app.AlertDialog
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.os.Build
+import android.os.Bundle
+import android.provider.MediaStore
+import android.view.Gravity
+import android.view.View
+import android.view.Window
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.RelativeLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatActivity
+import java.io.IOException
+
+class MainActivity : AppCompatActivity() {
+    private lateinit var mClassifier: Classifier
+    private lateinit var mBitmap: Bitmap
+    private val mCameraRequestCode = 0
+    private val mGalleryRequestCode = 2
+    private val mInputSize = 224
+    private val mModelPath = "model.tflite"
+    private val mLabelPath = "labels.txt"
+    private val mSamplePath = "c06210fb440326c3613cef22c86f0dee.png"
+    lateinit var builder: AlertDialog.Builder
+    lateinit var mPhoto: ImageView
+    lateinit var mCameraButton: Button
+    lateinit var mGalleryButton: Button
+    lateinit var mDetectButton: Button
+    lateinit var mResult: TextView
+    lateinit var mResultTextView: TextView
+    lateinit var mainLay: RelativeLayout
+    lateinit var mResultName: TextView
+    lateinit var Percent: TextView
+    lateinit var Define: TextView
+    lateinit var Growthrate: TextView
+    lateinit var LifeSpan:TextView
+    lateinit var defBtn: ImageView
+    lateinit var homeBtn: ImageView
+    lateinit var NativeChickenBtn: ImageView
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        setContentView(R.layout.activity_main)
+        mClassifier = Classifier(assets, mModelPath, mLabelPath, mInputSize)
+        mPhoto = findViewById(R.id.mPhoto)
+        resources.assets.open(mSamplePath).use {
+            mBitmap = BitmapFactory.decodeStream(it)
+            mBitmap = Bitmap.createScaledBitmap(mBitmap, mInputSize, mInputSize, true)
+            mPhoto.setImageBitmap(mBitmap)
+        }
+
+        mCameraButton = findViewById(R.id.mCameraButton)
+        mGalleryButton = findViewById(R.id.mGalleryButton)
+        mDetectButton = findViewById(R.id.mDetectButton)
+        mResult = findViewById(R.id.mResult)
+        mResultTextView = findViewById(R.id.mResultTextView)
+        homeBtn = findViewById(R.id.homeBtn)
+        defBtn = findViewById(R.id.AdieBtn)
+        NativeChickenBtn = findViewById(R.id.NativeChickenBtn)
+        mainLay = findViewById(R.id.mainLay)
+        mResultName = findViewById(R.id.mResultName)
+        Percent = findViewById(R.id.Percent)
+        Define = findViewById(R.id.Define)
+        Growthrate = findViewById(R.id.growthrate)
+        LifeSpan = findViewById(R.id.LifeSpan)
+
+
+        NativeChickenBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this, PHILIPPINENATIVECHICKEN::class.java))
+        })
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this, Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this, ListActivity::class.java))
+        })
+
+        mCameraButton.setOnClickListener(View.OnClickListener {
+            val callCameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            startActivityForResult(callCameraIntent, mCameraRequestCode)
+            mResult.text = ""
+            mResultTextView.text = ""
+            mResultName.text = ""
+            Percent.text = ""
+        })
+        mGalleryButton.setOnClickListener {
+            val callGalleryIntent = Intent(Intent.ACTION_PICK)
+            callGalleryIntent.type = "image/*"
+            startActivityForResult(callGalleryIntent, mGalleryRequestCode)
+        }
+        mDetectButton.setOnClickListener {
+            val results = mClassifier.recognizeImage(mBitmap).firstOrNull()
+            mResult.text = results?.title
+            Log.i("TAG", "${mResult.text}")
+
+            if (results?.confidence != null) {
+                mResultTextView.text = "Confidence:" + (results!!.confidence-0.10)
+                Percent.text = "Percent:" + (((results!!.confidence * 100).toInt())-10) + "%"
+            }
+            else{
+                mResultTextView.text = "Confidence: 0"
+                Percent.text = "Percent: 0%"
+            }
+            if (mResultTextView.text == "") {
+                mResult.text = ("Non Detected")
+
+            }
+            if ((mResult.text == "Banaba Female") || (mResult.text == "Banaba Male"))  {
+                mResultName.setText("Quezon and Batangas")
+                Define.setText("Ang Banaba ay isang katutubong manok na matatagpuan sa mga lalawigan ng Quezon at Batangas, sa hilagang bahagi ng Pilipinas. Ayon sa pinakahuling natuklasan, ang Banaba ay nagpapakita ng mga magagandang katangian sa mga tuntunin ng produksyon at paglaki ng itlog. \n" +
+                               "Ang Banaba fowl ay isang straight-combed breed. Black-breasted na may pulang-kahel na balahibo ng hackle sa mga tandang. Ang mga inahin ay may kulay na trigo at tuwid na suklay. Mga balahibo ng Black Tail sa magkabilang kasarian. Straight-comb na may maliwanag na pulang earlobes; maaaring magkaroon ng puting earlobes. Nakatayo nang tuwid na may mga shank na kulay slate. Maaaring mag-iba ang kulay ng plumage. \n" +
+                               "Isa sa mga magandang bentahe ng mga native na lahi ng manok tulad ng Banaba kaysa sa mga imported na pure breed at hybrid ay ang ating mga native na manok ay sanay sa mga tropikal na klima. Ito rin ang dahilan kung bakit mas malakas sila laban sa mga sakit kumpara sa mga imported na lahi.")
+                Growthrate.setText("1.06 to 1.20 kilo Adult weight")
+                LifeSpan.setText("Chickens, on average, live for about 5 to 10 years, so a 9-year-old chicken is considered quite mature.")
+            } else if ((mResult.text == "Paraoakan Female") || (mResult.text == "Paraoakan Male")) {
+                mResultName.setText("Basilan and Jolo Palawan")
+                Define.setText("Ang Paraokan (o Parawakan) na manok ay orihinal na nagmula sa Malaysia at ipinakilala sa Pilipinas noong ika-14 na siglo ng mga Arabong misyonero at Muslim na mangangalakal. Ito ay kasalukuyang sinasaka pangunahin sa isla ng Palawan, ngunit maaari rin itong matagpuan sa mga lalawigan ng Maguindanao at Lanao del Sur at sa mga isla ng Basilan at Jolo (dahil dito, ang lahi ay kilala rin sa lokal na pangalan bilang Jolo). \n" +
+                               "Kung ikukumpara sa ibang lahi ng katutubong manok sa Pilipinas, ang Paraokan na manok ang pinakamalaki. Mayroon itong mahahabang binti, mas malaking katawan, ulo kaysa sa iba pang lokal na lahi, at pahabang leeg. ")
+                Growthrate.setText("1.9 to 2.5 kilo Adult weight ")
+                LifeSpan.setText("Chickens, on average, live for about 5 to 10 years, so a 9-year-old chicken is considered quite mature.")
+            }
+            else {
+                mResult.text = ("Non Detected")
+                mResultTextView.setText("")
+                Percent.setText("")
+                mResultName.setText(" ") // no space doesn't work with this TextView, so added a space
+                Define.setText("")
+                Growthrate.setText("")
+                LifeSpan.setText("")
+            }
+        }
+    }
+    private fun scaleImage(bitmap: Bitmap?): Bitmap {
+        val orignalWidth = bitmap!!.width
+        val originalHeight = bitmap.height
+        val scaleWidth = mInputSize.toFloat() / orignalWidth
+        val scaleHeight = mInputSize.toFloat() / originalHeight
+        val matrix = Matrix()
+        matrix.postScale(scaleWidth, scaleHeight)
+        return Bitmap.createBitmap(bitmap, 0, 0, orignalWidth, originalHeight, matrix, true)
+    }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == mCameraRequestCode) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                mBitmap = data.extras!!.get("data") as Bitmap
+                mBitmap = scaleImage(mBitmap)
+                val toast = Toast.makeText(
+                    this,
+                    ("Image crop to: w= ${mBitmap.width} h= ${mBitmap.height}"),
+                    Toast.LENGTH_LONG
+                )
+                toast.setGravity(Gravity.BOTTOM, 0, 20)
+                toast.show()
+                mPhoto.setImageBitmap(mBitmap)
+                mResultTextView.text = "Your photo image set now."
+            } else {
+                Toast.makeText(this, "Camera cancel..", Toast.LENGTH_LONG).show()
+            }
+        } else if (requestCode == mGalleryRequestCode) {
+            if (data != null) {
+                val uri = data.data
+                try {
+                    mBitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                }
+                println("Success!!!")
+                mBitmap = scaleImage(mBitmap)
+                mPhoto.setImageBitmap(mBitmap)
+
+            }
+        } else {
+            Toast.makeText(this, "Unrecognized request code", Toast.LENGTH_LONG).show()
+
+        }
+    }
+}
+
+Classifier Kotlin
+package com.example.chickenai
+import android.content.res.AssetManager
+import android.graphics.Bitmap
+import android.util.Log
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
+import java.util.PriorityQueue
+class Classifier(assetManager: AssetManager, mModelPath: String, mLabelPath: String, mInputSize: Int) {
+    private var INTERPRETER: Interpreter
+    private var LABEL_LIST: List<String>
+    private val INPUT_SIZE: Int = mInputSize
+    private val PIXEL_SIZE: Int = 3
+    private val IMAGE_MEAN = 0
+    private val IMAGE_STD = 255.0f
+    private val MAX_RESULTS = 11
+    private val THRESHOLD = 0.4f
+    data class Recognition(
+        var id: String = "",
+        var title: String = "",
+        var confidence: Float = 0F
+    ) {
+        override fun toString(): String {
+            return "Title = $title, Confidence = $confidence)"
+        }
+    }
+    init {
+        INTERPRETER = Interpreter(loadModelFile(assetManager, mModelPath))
+        LABEL_LIST = loadLabelList(assetManager, mLabelPath)
+    }
+    init {
+        INTERPRETER = Interpreter(loadModelFile(assetManager, mModelPath))
+        LABEL_LIST = loadLabelList(assetManager, mLabelPath)
+    }
+    private fun loadModelFile(assetManager: AssetManager, modelPath: String): MappedByteBuffer {
+        val fileDescriptor = assetManager.openFd(modelPath)
+        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
+        val fileChannel = inputStream.channel
+        val startOffset = fileDescriptor.startOffset
+        val declaredLength = fileDescriptor.declaredLength
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+    }
+    private fun loadLabelList(assetManager: AssetManager, labelPath: String): List<String> {
+        return assetManager.open(labelPath).bufferedReader().useLines { it.toList() }
+    }
+    fun recognizeImage(bitmap: Bitmap): List<Recognition> {
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, false)
+        val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
+        val result = Array(1) { FloatArray(LABEL_LIST.size) }
+
+        INTERPRETER.run(byteBuffer, result)
+        return getSortedResult(result)
+    }
+    private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
+        val byteBuffer = ByteBuffer.allocateDirect(4 * INPUT_SIZE * INPUT_SIZE * PIXEL_SIZE)
+        byteBuffer.order(ByteOrder.nativeOrder())
+        val intValues = IntArray(INPUT_SIZE * INPUT_SIZE)
+        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        var pixel = 0
+        for (i in 0 until INPUT_SIZE) {
+            for (j in 0 until INPUT_SIZE) {
+                val `val` = intValues[pixel++]
+                byteBuffer.putFloat((((`val`.shr(16) and 0xFF) - IMAGE_MEAN) / IMAGE_STD))
+                byteBuffer.putFloat((((`val`.shr(8) and 0xFF) - IMAGE_MEAN) / IMAGE_STD))
+                byteBuffer.putFloat((((`val` and 0xFF) - IMAGE_MEAN) / IMAGE_STD))
+            }
+        }
+        return byteBuffer
+    }
+    private fun getSortedResult(labelProbArray: Array<FloatArray>): List<Recognition> {
+        Log.d("Classifier", "List Size:(%d, %d, %d)".format(labelProbArray.size,labelProbArray[0].size,LABEL_LIST.size))
+        val pq = PriorityQueue(
+            MAX_RESULTS,
+            Comparator<Recognition> {
+                    (_, _, confidence1), (_, _, confidence2)
+                -> java.lang.Float.compare(confidence1, confidence2) * -1
+            })
+        for (i in LABEL_LIST.indices) {
+            val confidence = labelProbArray[0][i]
+            if (confidence >= THRESHOLD) {
+                pq.add(Recognition("" + i,
+                    if (LABEL_LIST.size > i) LABEL_LIST[i] else "Unknown", confidence)
+                )
+            }
+        }
+        Log.d("Classifier", "pqsize:(%d)".format(pq.size))
+        val recognitions = ArrayList<Recognition>()
+        val recognitionsSize = Math.min(pq.size, MAX_RESULTS)
+        for (i in 0 until recognitionsSize) {
+            recognitions.add(pq.poll())
+        }
+        return recognitions
+    }
+}
+
+
+List Activity
+package com.example.chickenai
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.cardview.widget.CardView
+class ListActivity : AppCompatActivity() {
+    lateinit var NativeChickenBtn: ImageView
+    lateinit var homeBtn:ImageView
+    lateinit var AdieBtn:ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var c1:CardView
+    lateinit var c6:CardView
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        setContentView(R.layout.activity_list)
+        NativeChickenBtn=findViewById(R.id.NativeChickenBtn)
+        homeBtn=findViewById(R.id.homeBtn)
+        AdieBtn=findViewById(R.id.AdieBtn)
+        c1=findViewById(R.id.c1)
+        c6=findViewById(R.id.c6)
+        NativeChickenBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this, PHILIPPINENATIVECHICKEN::class.java))
+        })
+
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+        AdieBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+    c1.setOnClickListener(View.OnClickListener {
+        startActivity(Intent(this,List1::class.java))
+    })
+    c6.setOnClickListener(View.OnClickListener {
+        startActivity(Intent(this,List6::class.java))
+
+
+About
+
+package com.example.chickenai
+
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+
+class About : AppCompatActivity() {
+
+    lateinit var imageView: ImageView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_about)
+
+        imageView=findViewById(R.id.imageView)
+
+        imageView.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+    }
+}
+
+Chicken List 1
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+class ChickenList1 : AppCompatActivity() {
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn:ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list1)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+
+    }
+} 
+How to Use App
+
+package com.example.chickenai
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.LinearLayout
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+
+class HowtoUseApp : AppCompatActivity() {
+
+
+    lateinit var builder: AlertDialog.Builder
+    lateinit var JDM1: LinearLayout
+    lateinit var JDM2: LinearLayout
+    lateinit var JDM3: LinearLayout
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_howto_use_app)
+
+        JDM1=findViewById(R.id.JDM1)
+        JDM2=findViewById(R.id.JDM2)
+        JDM3=findViewById(R.id.JDM3)
+
+        JDM1.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        JDM2.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        JDM3.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+
+    }
+}
+
+Native Chicken List 1
+
+package com.example.chickenai
+
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+class NativeChickenList1 : AppCompatActivity() {
+
+    lateinit var outBtn: ImageView
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var bckBtn:ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_native_chicken_list1)
+
+        outBtn=findViewById(R.id.outBtn)
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,PHILIPPINENATIVECHICKEN::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+    }
+}
+
+
+
+PHILIPPINENATIVECHICKEN
+
+package com.example.chickenai
+import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.LinearLayout
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+class PHILIPPINENATIVECHICKEN : AppCompatActivity() {
+
+
+    lateinit var builder:AlertDialog.Builder
+    lateinit var c1:LinearLayout
+    lateinit var c2:LinearLayout
+    lateinit var c3:LinearLayout
+    lateinit var c4:LinearLayout
+    lateinit var c5:LinearLayout
+    lateinit var c6:LinearLayout
+    lateinit var BBM1:LinearLayout
+    lateinit var BBM2:LinearLayout
+    lateinit var BBM3:LinearLayout
+
+    @SuppressLint("SuspiciousIndentation")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            setContentView(R.layout.activity_philippinenativechicken)
+
+        c1=findViewById(R.id.c1)
+        c2=findViewById(R.id.c2)
+        c3=findViewById(R.id.c3)
+        c4=findViewById(R.id.c4)
+        c5=findViewById(R.id.c5)
+        c6=findViewById(R.id.c6)
+        BBM1=findViewById(R.id.BBM1)
+        BBM2=findViewById(R.id.BBM2)
+        BBM3=findViewById(R.id.BBM3)
+
+
+        c1.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList1::class.java))
+        })
+
+        c2.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList2::class.java))
+        })
+
+        c3.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList3::class.java))
+        })
+
+        c4.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList4::class.java))
+        })
+
+        c5.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList5::class.java))
+        })
+
+        c6.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NativeChickenList6::class.java))
+        })
+
+
+        BBM1.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        BBM2.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+
+        BBM3.setOnClickListener(View.OnClickListener {
+            val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+
+
+
+
+
+ProgressBarAnimation
+
+package com.example.chickenai
+
+import android.content.Context
+import android.content.Intent
+import android.view.animation.Animation
+import android.view.animation.Transformation
+import android.widget.ProgressBar
+import android.widget.TextView
+
+class ProgressBarAnimation (
+    var context: Context,
+    var progressBar: ProgressBar,
+    var textView: TextView,
+    var from :Float,
+    var to :Float
+
+) : Animation()
+
+{
+    override fun applyTransformation(interpolatedTime: Float, t: Transformation?) {
+        super.applyTransformation(interpolatedTime, t)
+        val value = from + (to - from) * interpolatedTime
+        progressBar.progress = value.toInt()
+        textView.text = "Loading ${value.toInt()} %"
+        if (value == to){
+            context.startActivity(Intent(context,Home::class.java))
+        }
+    }
+
+}
+
+Chicken List 3
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+class ChickenList3 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+
+        setContentView(R.layout.activity_chicken_list3)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+Chicken loading
+
+
+package com.example.chickenai
+
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+
+class Chickenloading : AppCompatActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        setContentView(R.layout.activity_chickenloading)
+
+        val progressBar = findViewById<ProgressBar>(R.id.ProgressBar)
+        val textView = findViewById<TextView>(R.id.textView)
+
+        progressBar.max = 100
+        progressBar.scaleY = 3F
+        val anim = ProgressBarAnimation(
+            this,progressBar,textView, 0F, 100F
+        )
+        anim.duration = 8000
+        progressBar.animation = anim
+
+
+    }
+}
+
+Chicken List 5
+
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+class ChickenList5 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list5)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+
+
+
+
+
+
+
+
+
+List 1
+
+package com.example.chickenai
+import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+
+class List1 : AppCompatActivity() {
+    lateinit var NativeChickenBtn:ImageView
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var bckBtn:ImageView
+
+
+
+    @SuppressLint("MissingInflatedId")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_list1)
+
+        NativeChickenBtn=findViewById(R.id.NativeChickenBtn)
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+
+        NativeChickenBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,PHILIPPINENATIVECHICKEN::class.java))
+        })
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+    }
+}
+
+
+List 6
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+
+class List6 : AppCompatActivity() {
+
+    lateinit var NativeChickenBtn: ImageView
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var bckBtn:ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_list6)
+
+        NativeChickenBtn=findViewById(R.id.NativeChickenBtn)
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+
+        NativeChickenBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,PHILIPPINENATIVECHICKEN::class.java))
+        })
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,ListActivity::class.java))
+        })
+    }
+}
+
+Chicken List 6
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+class ChickenList6 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+
+        setContentView(R.layout.activity_chicken_list6)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+Chicken List 7
+
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+class ChickenList7 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list7)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+Chicken List 8
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+class ChickenList8 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list8)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+Chicken List 9
+
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+class ChickenList9 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list9)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+
+ 
+Chicken List 10
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+
+   class ChickenList10 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        setContentView(R.layout.activity_chicken_list10)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        defBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
+
+Chicken List 11
+
+package com.example.chickenai
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.Window
+import android.widget.ImageView
+import androidx.appcompat.app.AppCompatActivity
+import kotlin.system.exitProcess
+
+class ChickenList11 : AppCompatActivity() {
+
+    lateinit var homeBtn: ImageView
+    lateinit var defBtn: ImageView
+    lateinit var builder: AlertDialog.Builder
+    lateinit var outBtn: ImageView
+    lateinit var bckBtn: ImageView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        setContentView(R.layout.activity_chicken_list11)
+
+        homeBtn=findViewById(R.id.homeBtn)
+        defBtn=findViewById(R.id.AdieBtn)
+        outBtn=findViewById(R.id.outBtn)
+        bckBtn=findViewById(R.id.bckBtn)
+
+        homeBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,Home::class.java))
+        })
+
+        dfBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,MainActivity::class.java))
+        })
+        bckBtn.setOnClickListener(View.OnClickListener {
+            startActivity(Intent(this,NonNativeChickenList::class.java))
+        })
+        outBtn.setOnClickListener(View.OnClickListener {
+            val builder = AlertDialog.Builder(this)
+
+            builder.setTitle("Confirm Exit").setMessage("Do you really want to Exit?(Y/N)")
+                .setPositiveButton(
+                    "Yes"
+                ) { dialogInterface, i ->
+                    finishAffinity()
+                    exitProcess(0)
+                }.setNegativeButton(
+                    "No"
+                ) { dialogInterface, i -> dialogInterface.dismiss() }.setCancelable(false)
+
+                .show()
+        })
+
+    }
+}
